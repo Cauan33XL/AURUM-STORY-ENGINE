@@ -1,0 +1,243 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
+
+:root {
+  /* Tema Cinzas do Atanor (Clássico) */
+  --bg-core: #0a0a0c;
+  --bg-panel: rgba(20, 20, 24, 0.7);
+  --bg-panel-solid: #17171c;
+  --bg-panel-hover: rgba(30, 30, 36, 0.8);
+  --gold-primary: #8A8A93;
+  --gold-glow: transparent;
+  --gold-bright: #A0A0AA;
+  --gold-dark: #55555C;
+  --text-main: #E0E0E0;
+  --text-muted: #6A6A73;
+  --text-dark: #1A1A1F;
+  --border-color: rgba(138, 138, 147, 0.2);
+  --border-highlight: rgba(138, 138, 147, 0.5);
+  --glass-blur: blur(16px);
+}
+
+body[data-theme="gold"] {
+  /* Tema Dourado (Padrão) - Cores mais ricas e saturadas */
+  --bg-core: #261a00;
+  --bg-panel: rgba(40, 28, 5, 0.85);
+  --bg-panel-solid: #2e2004;
+  --bg-panel-hover: rgba(50, 35, 10, 0.95);
+  --gold-primary: #FFD700;
+  --gold-glow: rgba(255, 200, 0, 0.5);
+  --gold-bright: #FFF8DC;
+  --gold-dark: #B8860B;
+  --text-main: #FDF5E6;
+  --text-muted: #BDB76B;
+  --text-dark: #1A1A1F;
+  --border-color: rgba(255, 215, 0, 0.3);
+  --border-highlight: rgba(255, 215, 0, 0.7);
+  background-image: 
+    radial-gradient(circle at 15% 50%, rgba(255, 200, 0, 0.12) 0%, transparent 70%),
+    radial-gradient(circle at 85% 30%, rgba(255, 200, 0, 0.12) 0%, transparent 70%) !important;
+}
+
+body[data-theme="white"] {
+  /* Tema Branco */
+  --bg-core: #f0f0f5;
+  --bg-panel: rgba(255, 255, 255, 0.85);
+  --bg-panel-solid: #ffffff;
+  --bg-panel-hover: rgba(245, 245, 245, 0.95);
+  --gold-primary: #B8860B;
+  --gold-glow: rgba(184, 134, 11, 0.2);
+  --gold-bright: #DAA520;
+  --gold-dark: #8B6508;
+  --text-main: #1A1A1F;
+  --text-muted: #555555;
+  --text-dark: #E0E0E0;
+  --border-color: rgba(0, 0, 0, 0.15);
+  --border-highlight: rgba(184, 134, 11, 0.5);
+}
+
+body[data-theme="contrast"] {
+  /* Tema Preto/Escuro Alto Contraste */
+  --bg-core: #000000;
+  --bg-panel: #000000;
+  --bg-panel-solid: #000000;
+  --bg-panel-hover: #111111;
+  --gold-primary: #FFFFFF;
+  --gold-glow: rgba(255, 255, 255, 0.3);
+  --gold-bright: #FFFFFF;
+  --gold-dark: #CCCCCC;
+  background-image: none !important;
+  --text-main: #FFFFFF;
+  --text-muted: #AAAAAA;
+  --text-dark: #000000;
+  --border-color: #555555;
+  --border-highlight: #FFFFFF;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Outfit', sans-serif;
+  background-color: var(--bg-core);
+  background-image: 
+    radial-gradient(circle at 15% 50%, var(--gold-glow) 0%, transparent 50%),
+    radial-gradient(circle at 85% 30%, var(--gold-glow) 0%, transparent 50%);
+  color: var(--text-main);
+  overflow: hidden;
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+  background: var(--bg-panel);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.aurum-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--gold-primary);
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 0.75rem;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.aurum-btn:hover {
+  background: rgba(212, 175, 55, 0.1);
+  border-color: var(--gold-primary);
+  box-shadow: 0 0 15px var(--gold-glow);
+}
+
+.aurum-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+  transition: all 0.5s ease;
+}
+
+.aurum-btn:hover::before {
+  left: 100%;
+}
+
+/* React Flow Customization */
+.react-flow__node-default, 
+.react-flow__node-input, 
+.react-flow__node-output {
+  background: var(--bg-panel);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-highlight);
+  color: var(--text-main);
+  border-radius: 8px;
+  padding: 10px 15px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.85rem;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+  transition: all 0.3s ease;
+}
+
+.react-flow__node:hover {
+  box-shadow: 0 0 20px var(--gold-glow);
+  border-color: var(--gold-primary);
+}
+
+.react-flow__handle {
+  background-color: var(--gold-primary);
+  border-color: var(--bg-core);
+  width: 8px;
+  height: 8px;
+}
+
+.react-flow__edge-path {
+  stroke: var(--gold-dark);
+  stroke-width: 2;
+  transition: all 0.3s ease;
+}
+
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--gold-primary);
+  filter: drop-shadow(0 0 5px var(--gold-glow));
+}
+
+@font-face {
+  font-family: 'Xirod';
+  src: url('./assets/fonts/xirod/Xirod.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* Custom Scrollbar for Context Menu */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--gold-dark);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--gold-primary);
+}
+
+/* Neon Pulse Effect */
+@keyframes neon-pulse-border {
+  0% { 
+    box-shadow: 0 0 2px var(--neon-dim), inset 0 0 1px var(--neon-dim); 
+    border-color: var(--neon-dim); 
+  }
+  50% { 
+    box-shadow: 0 0 10px var(--neon-dim), inset 0 0 4px var(--neon-dim); 
+    border-color: var(--neon-color); 
+  }
+  100% { 
+    box-shadow: 0 0 2px var(--neon-dim), inset 0 0 1px var(--neon-dim); 
+    border-color: var(--neon-dim); 
+  }
+}
+
+.neon-btn {
+  background: linear-gradient(180deg, var(--neon-dim) 0%, transparent 100%), #0a0a0a !important;
+  border: 1px solid var(--neon-dim) !important;
+  color: #FFFFFF !important;
+  font-weight: bold;
+  animation: neon-pulse-border 3s infinite ease-in-out;
+  border-radius: 4px;
+}
+
+.neon-btn:hover {
+  filter: brightness(1.3);
+  animation: none;
+  box-shadow: 0 0 12px var(--neon-color), inset 0 0 5px var(--neon-color) !important;
+  border-color: var(--neon-color) !important;
+}
+
+.neon-node {
+  animation: neon-pulse-border 4s infinite ease-in-out;
+  transition: filter 0.2s ease, border-color 0.2s ease;
+}
+
+.neon-node.selected {
+  box-shadow: 0 0 15px var(--neon-color), 0 0 25px var(--neon-dim) !important;
+  border-color: var(--gold-primary) !important;
+  animation: none;
+  z-index: 1000;
+}

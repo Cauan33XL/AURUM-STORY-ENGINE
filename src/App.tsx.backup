@@ -1,0 +1,987 @@
+import React, { useRef, useState, useEffect } from 'react'
+import { Settings, Search, Layers, Box, Cpu, Plus, Trash2, Network, Image as ImageIcon, Download, Upload, AlertTriangle } from 'lucide-react'
+import { v4 as uuidv4 } from 'uuid'
+import CustomNode from './CustomNode'
+import GenealogyNode from './GenealogyNode'
+import { EntityConfig, EntityType, AurumNodeData, FrameworkMode, CharacterStatus, AurumNode, AurumEdge, CameraState } from './types'
+
+const STORAGE_KEY = 'aurum_engine_save';
+
+const initialNodes: AurumNode[] = [
+  { 
+    id: '1', 
+    type: 'custom',
+    position: { x: 250, y: 100 }, 
+    data: { label: 'Organização Central', entityType: 'organization', description: 'O núcleo do seu mundo.' } as AurumNodeData
+  },
+  { 
+    id: '2', 
+    type: 'custom',
+    position: { x: 100, y: 300 }, 
+    data: { label: 'Figura Principal', entityType: 'character', description: 'Entidade de importância primária.' } as AurumNodeData
+  }
+];
+
+const initialEdges: AurumEdge[] = [
+  { id: 'e1-2', source: '1', target: '2', label: 'Conexão Primária' },
+];
+
+export default function App() {
+  // --- Persistent State ---
+  const [nodes, setNodes] = useState<AurumNode[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    try { return saved ? JSON.parse(saved).nodes || initialNodes : initialNodes; } catch { return initialNodes; }
+  });
+  
+  const [edges, setEdges] = useState<AurumEdge[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    try { return saved ? JSON.parse(saved).edges || initialEdges : initialEdges; } catch { return initialEdges; }
+  });
+
+  const [camera, setCamera] = useState<CameraState>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    try { return saved ? JSON.parse(saved).camera || { x: 0, y: 0, zoom: 1 } : { x: 0, y: 0, zoom: 1 }; } catch { return { x: 0, y: 0, zoom: 1 }; }
+  });
+
+  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, nodeId: string | null, canvasPos: {x:number, y:number} } | null>(null);
+
+  const [bgImage, setBgImage] = useState<string | null>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    try { return saved ? JSON.parse(saved).bgImage || null : null; } catch { return null; }
+  });
+
+  const [framework, setFramework] = useState<FrameworkMode>('core');
+  const [selectedNode, setSelectedNode] = useState<AurumNode | null>(null);
+  const [isSystemMenuOpen, setIsSystemMenuOpen] = useState(false);
+
+  // Auto-Save Effect
+  useEffect(() => {
+    const saveData = { version: '1.0', nodes, edges, camera, bgImage };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(saveData));
+    } catch (error) {
+      console.warn("Aurum Engine: Limite do LocalStorage excedido (provavelmente a imagem de fundo ou retratos são muito pesados). O auto-save falhou neste frame.");
+    }
+  }, [nodes, edges, camera, bgImage]);
+
+  // --- Aurum Flow Engine State ---
+  const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
+  const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
+  const [connectingNodeId, setConnectingNodeId] = useState<string | null>(null);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  
+  const containerRef = useRef<HTMLElement>(null);
+  const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // --- System Functions ---
+  const handleExport = () => {
+    const saveData = { version: '1.0', nodes, edges, camera, bgImage };
+    const blob = new Blob([JSON.stringify(saveData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'universo.aurum';
+    a.click();
+    URL.revokeObjectURL(url);
+    setIsSystemMenuOpen(false);
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (data.nodes) setNodes(data.nodes);
+        if (data.edges) setEdges(data.edges);
+        if (data.camera) setCamera(data.camera);
+        if (data.bgImage !== undefined) setBgImage(data.bgImage);
+        setIsSystemMenuOpen(false);
+      } catch (err) {
+        alert('Arquivo .aurum inválido ou corrompido.');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleReset = () => {
+    if (window.confirm("ATENÇÃO: Isso apagará o universo inteiro! Tem certeza?")) {
+      setNodes([]);
+      setEdges([]);
+      setCamera({ x: 0, y: 0, zoom: 1 });
+      setBgImage(null);
+      setSelectedNode(null);
+      setIsSystemMenuOpen(false);
+    }
+  };
+
+  // Context Menu Handlers
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const target = e.target as HTMLElement;
+    const nodeEl = target.closest('.aurum-node');
+    
+    let nodeId = null;
+    if (nodeEl) {
+      nodeId = nodeEl.getAttribute('data-id');
+    }
+
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const canvasPos = {
+        x: (e.clientX - rect.left - camera.x) / camera.zoom,
+        y: (e.clientY - rect.top - camera.y) / camera.zoom
+      };
+      
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        nodeId: nodeId,
+        canvasPos
+      });
+    }
+  };
+
+  const closeContextMenu = () => {
+    if (contextMenu) setContextMenu(null);
+  };
+
+  // --- Engine Interactions ---
+  const handleCanvasPointerDown = (e: React.PointerEvent) => {
+    closeContextMenu();
+    if (e.button === 2) return; 
+    
+    if (connectingNodeId) {
+      setConnectingNodeId(null);
+    } else {
+      setIsDraggingCanvas(true);
+      setSelectedNode(null);
+      setIsSystemMenuOpen(false);
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
+  };
+
+  const handleCanvasPointerMove = (e: React.PointerEvent) => {
+    if (isDraggingCanvas) {
+      setCamera(prev => ({
+        ...prev,
+        x: prev.x + e.movementX,
+        y: prev.y + e.movementY
+      }));
+    }
+
+    if (connectingNodeId && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      setMousePos({
+        x: (e.clientX - rect.left - camera.x) / camera.zoom,
+        y: (e.clientY - rect.top - camera.y) / camera.zoom
+      });
+    }
+  };
+
+  const handleCanvasPointerUp = (e: React.PointerEvent) => {
+    if (connectingNodeId) {
+      setConnectingNodeId(null);
+    }
+    if (isDraggingCanvas) {
+      setIsDraggingCanvas(false);
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  };
+
+  const handleCanvasWheel = (e: React.WheelEvent) => {
+    const zoomSensitivity = 0.001;
+    setCamera(prev => {
+      const delta = -e.deltaY * zoomSensitivity;
+      const newZoom = Math.min(Math.max(0.2, prev.zoom + delta), 3);
+      return { ...prev, zoom: newZoom };
+    });
+  };
+
+  const handleNodePointerDown = (e: React.PointerEvent, n: AurumNode) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+
+    e.stopPropagation();
+    setDraggedNodeId(n.id);
+    setSelectedNode(n);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleNodePointerMove = (e: React.PointerEvent, id: string) => {
+    if (draggedNodeId === id) {
+      setNodes(nds => nds.map(n => n.id === id ? {
+        ...n,
+        position: {
+          x: n.position.x + e.movementX / camera.zoom,
+          y: n.position.y + e.movementY / camera.zoom
+        }
+      } : n));
+    }
+  };
+
+  const handleNodePointerUp = (e: React.PointerEvent, id: string) => {
+    if (connectingNodeId && connectingNodeId !== id) {
+      setEdges(prev => [...prev, {
+        id: `e-${connectingNodeId}-${id}`,
+        source: connectingNodeId,
+        target: id
+      }]);
+    }
+    
+    if (draggedNodeId === id) {
+      setDraggedNodeId(null);
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    
+    setConnectingNodeId(null);
+  };
+
+  const startConnection = (e: React.PointerEvent, id: string) => {
+    e.stopPropagation();
+    setConnectingNodeId(id);
+    
+    const nodeEl = nodeRefs.current[id];
+    if (nodeEl && containerRef.current) {
+       const rect = containerRef.current.getBoundingClientRect();
+       setMousePos({
+          x: (e.clientX - rect.left - camera.x) / camera.zoom,
+          y: (e.clientY - rect.top - camera.y) / camera.zoom
+       });
+    }
+  };
+
+  // --- Utility to Draw Edges ---
+  const getEdgeAnchors = (sourceId: string, targetId: string | null, mousePos: {x:number, y:number} | null) => {
+    const sNode = nodes.find(n => n.id === sourceId);
+    if (!sNode) return { p1: {x:0, y:0}, p2: {x:0, y:0} };
+    
+    const sEl = nodeRefs.current[sourceId];
+    const sw = sEl ? sEl.offsetWidth : 150;
+    const sh = sEl ? sEl.offsetHeight : 60;
+    const sCenter = { x: sNode.position.x + sw/2, y: sNode.position.y + sh/2 };
+
+    let tPos, tw = 0, th = 0, tNode = null;
+    if (targetId) {
+      tNode = nodes.find(n => n.id === targetId);
+      if (tNode) {
+        const tEl = nodeRefs.current[targetId];
+        tw = tEl ? tEl.offsetWidth : 150;
+        th = tEl ? tEl.offsetHeight : 60;
+        tPos = { x: tNode.position.x + tw/2, y: tNode.position.y + th/2 };
+      } else {
+        tPos = mousePos || {x:0, y:0};
+      }
+    } else {
+      tPos = mousePos || {x:0, y:0};
+    }
+
+    let p1, p2;
+
+    if (sNode.type === 'genealogy') {
+      p1 = tPos.y > sCenter.y ? { x: sCenter.x, y: sNode.position.y + sh } : { x: sCenter.x, y: sNode.position.y };
+    } else {
+      p1 = tPos.x > sCenter.x ? { x: sNode.position.x + sw, y: sCenter.y } : { x: sNode.position.x, y: sCenter.y };
+    }
+
+    if (tNode) {
+      if (tNode.type === 'genealogy') {
+        p2 = sCenter.y > tPos.y ? { x: tPos.x, y: tNode.position.y + th } : { x: tPos.x, y: tNode.position.y };
+      } else {
+        p2 = sCenter.x > tPos.x ? { x: tNode.position.x + tw, y: tPos.y } : { x: tNode.position.x, y: tPos.y };
+      }
+    } else {
+      p2 = tPos;
+    }
+
+    return { p1, p2 };
+  };
+
+  const drawBezier = (x1: number, y1: number, x2: number, y2: number) => {
+    const dx = Math.abs(x2 - x1);
+    const dy = Math.abs(y2 - y1);
+    const offset = Math.max(dx, dy) * 0.4;
+    return `M ${x1} ${y1} C ${x1} ${y1 + offset}, ${x2} ${y2 - offset}, ${x2} ${y2}`;
+  };
+
+  // --- Standard UI Handlers ---
+  const handleAddNode = (type: EntityType, pos?: {x:number, y:number}) => {
+    const config = EntityConfig[type];
+    const newNode: AurumNode = {
+      id: uuidv4(),
+      type: 'custom',
+      position: pos || { x: (-camera.x + window.innerWidth/2)/camera.zoom - 100, y: (-camera.y + window.innerHeight/2)/camera.zoom - 30 },
+      data: { 
+        label: `Novo(a) ${config.label}`, 
+        entityType: type, 
+        description: '' 
+      } as AurumNodeData
+    };
+    setNodes(nds => [...nds, newNode]);
+    setSelectedNode(newNode);
+    closeContextMenu();
+  };
+
+  const handleAddGenealogyNode = (type: 'group' | 'member', pos?: {x:number, y:number}) => {
+    const newNode: AurumNode = {
+      id: uuidv4(),
+      type: type === 'group' ? 'custom' : 'genealogy',
+      position: pos || { x: (-camera.x + window.innerWidth/2)/camera.zoom - 75, y: (-camera.y + window.innerHeight/2)/camera.zoom - 30 },
+      data: { 
+        label: type === 'group' ? 'Nova Facção/Raiz' : 'Novo Integrante', 
+        entityType: type === 'group' ? 'organization' : 'character', 
+        description: '',
+        status: 'alive'
+      } as AurumNodeData
+    };
+    setNodes(nds => [...nds, newNode]);
+    setSelectedNode(newNode);
+    closeContextMenu();
+  };
+
+  const handleDeleteNode = () => {
+    if (!selectedNode) return;
+    setNodes(nds => nds.filter((n) => n.id !== selectedNode.id));
+    setEdges(eds => eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id));
+    setSelectedNode(null);
+  };
+
+  return (
+    <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+      {/* PAINEL ESQUERDO: MENU PRINCIPAL & LISTA */}
+      <aside className="glass-panel" style={{ 
+        width: isLeftPanelOpen ? '300px' : '0px', 
+        height: '100%', 
+        zIndex: 10, 
+        display: 'flex', 
+        flexDirection: 'column',
+        borderRight: isLeftPanelOpen ? '1px solid var(--border-color)' : 'none',
+        borderLeft: 'none',
+        borderTop: 'none',
+        borderBottom: 'none',
+        position: 'relative',
+        transition: 'width 0.3s ease',
+        overflow: 'hidden'
+      }}>
+        <div style={{ padding: '24px 24px 12px 24px', minWidth: '300px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'var(--gold-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Cpu size={22} color="var(--bg-core)" />
+            </div>
+            <h1 style={{ color: 'var(--gold-primary)', fontFamily: 'Xirod, sans-serif', fontSize: '1rem', margin: 0, fontWeight: 'normal', lineHeight: '1.2' }}>
+              AURUM STORY <br/> <span style={{ color: 'var(--text-main)', fontSize: '1.25rem' }}>ENGINE</span>
+            </h1>
+          </div>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.65rem', marginBottom: '24px', textTransform: 'uppercase', letterSpacing: '1px' }}>
+            Acesso ao Conhecimento Narrativo
+          </p>
+
+          {/* FRAMEWORK SELECTOR */}
+          <h2 style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', margin: '0 0 12px 0' }}>
+            Módulos de Contexto
+          </h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '24px' }}>
+            <button 
+              onClick={() => setFramework('core')}
+              style={{ 
+                padding: '12px 16px', 
+                background: framework === 'core' ? 'rgba(212, 175, 55, 0.15)' : 'rgba(0,0,0,0.4)', 
+                color: framework === 'core' ? 'var(--gold-primary)' : 'var(--text-muted)',
+                border: `1px solid ${framework === 'core' ? 'var(--gold-primary)' : 'var(--border-color)'}`, 
+                borderRadius: '8px', 
+                cursor: 'pointer', 
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                transition: 'all 0.2s',
+                textAlign: 'left'
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                 <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase' }}>Mundo Livre</span>
+                 <span style={{ fontSize: '0.65rem', opacity: 0.7, marginTop: '4px' }}>Locais, Eventos e Lore</span>
+              </div>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: framework === 'core' ? 'var(--gold-primary)' : 'transparent' }} />
+            </button>
+
+            <button 
+              onClick={() => setFramework('genealogy')}
+              style={{ 
+                padding: '12px 16px', 
+                background: framework === 'genealogy' ? 'rgba(212, 175, 55, 0.15)' : 'rgba(0,0,0,0.4)', 
+                color: framework === 'genealogy' ? 'var(--gold-primary)' : 'var(--text-muted)',
+                border: `1px solid ${framework === 'genealogy' ? 'var(--gold-primary)' : 'var(--border-color)'}`, 
+                borderRadius: '8px', 
+                cursor: 'pointer', 
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                transition: 'all 0.2s',
+                textAlign: 'left'
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                 <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase' }}>Hierarquia</span>
+                 <span style={{ fontSize: '0.65rem', opacity: 0.7, marginTop: '4px' }}>Facções, Genealogia e Linhas Estruturais</span>
+              </div>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: framework === 'genealogy' ? 'var(--gold-primary)' : 'transparent' }} />
+            </button>
+          </div>
+          
+          <h2 style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', margin: '0 0 12px 0' }}>
+            {framework === 'core' ? 'Criar Nova Entidade' : 'Ferramentas de Estrutura'}
+          </h2>
+          
+          {framework === 'core' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '12px' }}>
+              {Object.entries(EntityConfig).map(([key, config]) => (
+                <button 
+                  key={key}
+                  className="aurum-btn" 
+                  onClick={() => handleAddNode(key as EntityType)}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '6px', fontSize: '0.65rem', borderColor: `${config.color}40`, color: config.color, padding: '8px 10px' }}
+                >
+                  <Plus size={12} /> {config.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+              <button 
+                className="aurum-btn" 
+                onClick={() => handleAddGenealogyNode('group')}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', borderColor: 'var(--gold-primary)', color: 'var(--gold-primary)', padding: '10px' }}
+              >
+                <Network size={14} /> Novo Grupo (Raiz)
+              </button>
+              <button 
+                className="aurum-btn" 
+                onClick={() => handleAddGenealogyNode('member')}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', borderColor: '#4DA8DA80', color: '#4DA8DA', padding: '10px' }}
+              >
+                <Plus size={14} /> Novo Integrante / Nó
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', color: 'var(--gold-primary)', marginTop: '12px' }}>
+            <Layers size={16} />
+            <h2 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '1px', margin: 0 }}>Índice</h2>
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {nodes.map(node => {
+              const data = node.data;
+              const config = EntityConfig[data.entityType || 'concept'];
+              return (
+                <div key={node.id} onClick={() => {
+                  setSelectedNode(node);
+                  setCamera({ x: -node.position.x * camera.zoom + 150, y: -node.position.y * camera.zoom + window.innerHeight/2, zoom: camera.zoom });
+                }} style={{
+                  padding: '10px 12px',
+                  borderRadius: '6px',
+                  background: selectedNode?.id === node.id ? `${config.color}20` : 'rgba(0,0,0,0.3)',
+                  border: `1px solid ${selectedNode?.id === node.id ? config.color : 'transparent'}`,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px'
+                }}>
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: config.color }} />
+                  <span style={{ fontSize: '0.85rem' }}>{data.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* SYSTEM MENU OVERLAY */}
+        {isSystemMenuOpen && (
+          <div style={{ 
+            position: 'absolute', 
+            bottom: '70px', 
+            left: '24px', 
+            right: '24px', 
+            background: 'var(--bg-panel)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            padding: '12px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.8)'
+          }}>
+             <button onClick={handleExport} className="aurum-btn" style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: 'var(--border-color)', color: 'var(--text-main)' }}>
+                <Download size={14} /> Baixar Projeto (.aurum)
+             </button>
+             
+             <label className="aurum-btn" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', borderColor: 'var(--border-color)', color: 'var(--text-main)', cursor: 'pointer' }}>
+                <Upload size={14} /> Importar Projeto
+                <input type="file" accept=".aurum,.json" style={{ display: 'none' }} onChange={handleImport} />
+             </label>
+
+             <button onClick={handleReset} className="aurum-btn" style={{ display: 'flex', alignItems: 'center', gap: '8px', borderColor: '#ff444450', color: '#ff4444', marginTop: '8px' }}>
+                <AlertTriangle size={14} /> Hard Reset
+             </button>
+          </div>
+        )}
+
+        <div style={{ padding: '20px 24px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.75rem', transition: 'color 0.2s' }}>
+            <ImageIcon size={18} />
+            <span style={{ textTransform: 'uppercase', letterSpacing: '1px' }} className="hide-on-small">Fundo</span>
+            <input 
+              type="file" 
+              accept="image/*" 
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  setBgImage(reader.result as string);
+                };
+                reader.readAsDataURL(file);
+              }}
+            />
+          </label>
+          
+          <div style={{ display: 'flex', gap: '16px' }}>
+            {bgImage && (
+               <button onClick={() => setBgImage(null)} title="Remover Fundo" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex' }}>
+                 <Trash2 size={18} color="#ff4444" />
+               </button>
+            )}
+            <Search size={18} color="var(--text-muted)" style={{ cursor: 'pointer' }} />
+            <button onClick={() => setIsSystemMenuOpen(!isSystemMenuOpen)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex' }}>
+              <Settings size={18} color={isSystemMenuOpen ? "var(--gold-primary)" : "var(--text-muted)"} style={{ transition: 'color 0.2s' }} />
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Botão de Toggle do Painel Esquerdo */}
+      <button 
+        onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
+        style={{
+          position: 'absolute',
+          left: isLeftPanelOpen ? '300px' : '0px',
+          top: '50%',
+          transform: 'translateY(-50%)',
+          zIndex: 20,
+          background: 'var(--bg-panel)',
+          border: '1px solid var(--border-color)',
+          borderLeft: 'none',
+          color: 'var(--gold-primary)',
+          padding: '16px 4px',
+          cursor: 'pointer',
+          borderRadius: '0 8px 8px 0',
+          transition: 'left 0.3s ease',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}
+        title={isLeftPanelOpen ? "Recolher Painel" : "Expandir Painel"}
+      >
+        <div style={{ 
+          width: '4px', 
+          height: '24px', 
+          background: 'var(--gold-primary)', 
+          borderRadius: '2px',
+          opacity: 0.8
+        }} />
+      </button>
+
+      {/* CANVAS CENTRAL: O GRAFO - AURUM FLOW */}
+      <main 
+        ref={containerRef}
+        onPointerDown={handleCanvasPointerDown}
+        onPointerMove={handleCanvasPointerMove}
+        onPointerUp={handleCanvasPointerUp}
+        onPointerLeave={handleCanvasPointerUp}
+        onWheel={handleCanvasWheel}
+        onContextMenu={handleContextMenu}
+        style={{ 
+          flex: 1, 
+          position: 'relative',
+          backgroundImage: bgImage ? `url(${bgImage})` : 'none',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          cursor: isDraggingCanvas ? 'grabbing' : connectingNodeId ? 'crosshair' : 'grab',
+          overflow: 'hidden'
+        }}
+      >
+        {bgImage && <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', pointerEvents: 'none', zIndex: 0 }} />}
+        
+        {/* Dot pattern background (optional, simple CSS version) */}
+        {!bgImage && (
+          <div style={{ 
+            position: 'absolute', inset: 0, 
+            backgroundImage: `radial-gradient(var(--border-color) 1px, transparent 1px)`,
+            backgroundSize: `${24 * camera.zoom}px ${24 * camera.zoom}px`,
+            backgroundPosition: `${camera.x}px ${camera.y}px`,
+            opacity: 0.3, pointerEvents: 'none'
+          }} />
+        )}
+
+        <div style={{
+          position: 'absolute',
+          transformOrigin: '0 0',
+          transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`,
+          width: 0, height: 0,
+        }}>
+          {/* Edges Layer */}
+          <svg style={{ position: 'absolute', top: 0, left: 0, width: '10000px', height: '10000px', pointerEvents: 'none', overflow: 'visible' }}>
+             {edges.map(e => {
+               const { p1, p2 } = getEdgeAnchors(e.source, e.target, null);
+               return (
+                 <path 
+                   key={e.id}
+                   d={drawBezier(p1.x, p1.y, p2.x, p2.y)}
+                   fill="none"
+                   stroke="var(--gold-primary)"
+                   strokeWidth={2 / camera.zoom}
+                   opacity={0.6}
+                 />
+               )
+             })}
+             
+             {/* Active Connecting Edge */}
+             {connectingNodeId && (
+               <path 
+                 d={drawBezier(getEdgeAnchors(connectingNodeId, null, mousePos).p1.x, getEdgeAnchors(connectingNodeId, null, mousePos).p1.y, mousePos.x, mousePos.y)}
+                 fill="none"
+                 stroke="var(--gold-primary)"
+                 strokeWidth={2 / camera.zoom}
+                 strokeDasharray="5,5"
+                 opacity={0.8}
+               />
+             )}
+          </svg>
+
+          {/* Nodes Layer */}
+          {nodes.map(n => (
+            <div 
+              key={n.id}
+              className="aurum-node"
+              data-id={n.id}
+              ref={el => nodeRefs.current[n.id] = el}
+              onPointerDown={e => {
+                if (e.button === 2) {
+                   handleContextMenu(e as unknown as React.MouseEvent);
+                   return;
+                }
+                handleNodePointerDown(e, n);
+              }}
+              onPointerMove={e => handleNodePointerMove(e, n.id)}
+              onPointerUp={(e) => handleNodePointerUp(e, n.id)}
+              style={{
+                position: 'absolute',
+                left: n.position.x,
+                top: n.position.y,
+                cursor: connectingNodeId ? 'crosshair' : draggedNodeId === n.id ? 'grabbing' : 'grab',
+                zIndex: selectedNode?.id === n.id ? 10 : 1,
+                userSelect: 'none'
+              }}
+            >
+              {n.type === 'genealogy' ? (
+                <GenealogyNode 
+                    data={n.data} 
+                    selected={selectedNode?.id === n.id} 
+                    onConnectStart={(e) => startConnection(e as unknown as React.PointerEvent, n.id)}
+                    nodeId={n.id} 
+                />
+              ) : (
+                <CustomNode 
+                    data={n.data} 
+                    selected={selectedNode?.id === n.id} 
+                    onConnectStart={(e) => startConnection(e as unknown as React.PointerEvent, n.id)}
+                    nodeId={n.id} 
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      </main>
+
+      {/* CONTEXT MENU (RIGHT CLICK) */}
+      {contextMenu && (
+        <div style={{
+          position: 'absolute',
+          left: contextMenu.x,
+          top: contextMenu.y,
+          zIndex: 1000,
+          background: 'var(--bg-panel)',
+          backdropFilter: 'blur(12px)',
+          border: '1px solid var(--border-color)',
+          borderRadius: '12px',
+          padding: '8px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '4px',
+          minWidth: '200px'
+        }}>
+          {contextMenu.nodeId ? (
+            <>
+              <div style={{ padding: '4px 8px', fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Ações da Entidade</div>
+              <button 
+                className="aurum-btn"
+                onClick={() => {
+                  setNodes(prev => prev.filter(n => n.id !== contextMenu.nodeId));
+                  setEdges(prev => prev.filter(e => e.source !== contextMenu.nodeId && e.target !== contextMenu.nodeId));
+                  if (selectedNode?.id === contextMenu.nodeId) setSelectedNode(null);
+                  closeContextMenu();
+                }}
+                style={{ textAlign: 'left', display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', color: '#E45B5B', borderColor: 'transparent', background: 'transparent' }}
+              >
+                <Trash2 size={14} /> Excluir Entidade
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{ padding: '4px 8px', fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Criar Entidade Aqui</div>
+              {framework === 'core' ? (
+                <>
+                  <button className="aurum-btn" onClick={() => handleAddNode('character', contextMenu.canvasPos)} style={{ textAlign: 'left', border: 'none', background: 'transparent' }}>+ Personagem</button>
+                  <button className="aurum-btn" onClick={() => handleAddNode('location', contextMenu.canvasPos)} style={{ textAlign: 'left', border: 'none', background: 'transparent' }}>+ Local</button>
+                  <button className="aurum-btn" onClick={() => handleAddNode('organization', contextMenu.canvasPos)} style={{ textAlign: 'left', border: 'none', background: 'transparent' }}>+ Organização</button>
+                </>
+              ) : (
+                <>
+                  <button className="aurum-btn" onClick={() => handleAddGenealogyNode('group', contextMenu.canvasPos)} style={{ textAlign: 'left', border: 'none', background: 'transparent' }}>+ Grupo (Raiz)</button>
+                  <button className="aurum-btn" onClick={() => handleAddGenealogyNode('member', contextMenu.canvasPos)} style={{ textAlign: 'left', border: 'none', background: 'transparent' }}>+ Integrante</button>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* PAINEL DIREITO: INSPETOR E DETALHES */}
+      <aside className="glass-panel" style={{ 
+        width: '320px', 
+        height: '100%', 
+        zIndex: 10, 
+        padding: '24px', 
+        borderLeft: '1px solid var(--border-color)',
+        borderRight: 'none',
+        borderTop: 'none',
+        borderBottom: 'none',
+        transform: selectedNode ? 'translateX(0)' : 'translateX(100%)',
+        transition: 'transform 0.4s cubic-bezier(0.19, 1, 0.22, 1)',
+        position: 'absolute',
+        right: 0
+      }}>
+        {selectedNode && selectedNode.data ? (() => {
+          const data = selectedNode.data;
+          const config = EntityConfig[data.entityType || 'concept'];
+          
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '24px' }}>
+                <div style={{ padding: '6px', borderRadius: '6px', background: `${config.color}20`, color: config.color }}>
+                  <Box size={18} />
+                </div>
+                <h2 style={{ fontSize: '0.8rem', color: config.color, textTransform: 'uppercase', letterSpacing: '2px', margin: 0 }}>
+                  {config.label}
+                </h2>
+              </div>
+              
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px', textTransform: 'uppercase' }}>Nome da Entidade</label>
+                <input 
+                  type="text" 
+                  value={data.label} 
+                  onChange={(e) => {
+                    const newLabel = e.target.value;
+                    setNodes(nds => nds.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, label: newLabel } } : n));
+                    setSelectedNode({ ...selectedNode, data: { ...selectedNode.data, label: newLabel } } as AurumNode);
+                  }}
+                  style={{ 
+                    width: '100%', 
+                    background: 'rgba(0,0,0,0.5)', 
+                    border: '1px solid var(--border-color)', 
+                    color: 'var(--text-main)',
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    fontFamily: 'Outfit',
+                    fontSize: '0.9rem',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+
+              {selectedNode.type === 'genealogy' && (
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px', textTransform: 'uppercase' }}>Status Atual</label>
+                  <select 
+                    value={data.status || 'alive'}
+                    onChange={(e) => {
+                      const newStatus = e.target.value as CharacterStatus;
+                      setNodes(nds => nds.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, status: newStatus } } : n));
+                      setSelectedNode({ ...selectedNode, data: { ...selectedNode.data, status: newStatus } } as AurumNode);
+                    }}
+                    style={{
+                      width: '100%', 
+                      background: 'rgba(0,0,0,0.5)', 
+                      border: '1px solid var(--border-color)', 
+                      color: 'var(--text-main)',
+                      padding: '10px 12px',
+                      borderRadius: '6px',
+                      fontFamily: 'Outfit',
+                      fontSize: '0.85rem',
+                      outline: 'none',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value="alive">Vivo</option>
+                    <option value="dead">Morto</option>
+                    <option value="missing">Desaparecido</option>
+                    <option value="exiled">Exilado</option>
+                  </select>
+                </div>
+              )}
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px', textTransform: 'uppercase' }}>Tipo de Entidade</label>
+                <select 
+                  value={data.entityType}
+                  onChange={(e) => {
+                    const newType = e.target.value as EntityType;
+                    setNodes(nds => nds.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, entityType: newType } } : n));
+                    setSelectedNode({ ...selectedNode, data: { ...selectedNode.data, entityType: newType } } as AurumNode);
+                  }}
+                  style={{
+                    width: '100%', 
+                    background: 'rgba(0,0,0,0.5)', 
+                    border: '1px solid var(--border-color)', 
+                    color: 'var(--text-main)',
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    fontFamily: 'Outfit',
+                    fontSize: '0.85rem',
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {Object.entries(EntityConfig).map(([key, c]) => (
+                    <option key={key} value={key}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px', textTransform: 'uppercase' }}>Imagem do Nó</label>
+                
+                <div style={{ display: 'flex', gap: '8px', flexDirection: 'column' }}>
+                  <input 
+                    type="text" 
+                    value={data.imageUrl || ''} 
+                    placeholder="URL da Imagem (https://...)"
+                    onChange={(e) => {
+                      const newUrl = e.target.value;
+                      setNodes(nds => nds.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, imageUrl: newUrl } } : n));
+                      setSelectedNode({ ...selectedNode, data: { ...selectedNode.data, imageUrl: newUrl } } as AurumNode);
+                    }}
+                    style={{ 
+                      width: '100%', 
+                      background: 'rgba(0,0,0,0.5)', 
+                      border: '1px solid var(--border-color)', 
+                      color: 'var(--text-main)',
+                      padding: '10px 12px',
+                      borderRadius: '6px',
+                      fontFamily: 'Outfit',
+                      fontSize: '0.85rem',
+                      outline: 'none'
+                    }}
+                  />
+                  
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ flex: 1, height: '1px', background: 'var(--border-color)' }}></div>
+                    <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>OU</span>
+                    <div style={{ flex: 1, height: '1px', background: 'var(--border-color)' }}></div>
+                  </div>
+
+                  <label 
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: 'rgba(212, 175, 55, 0.1)',
+                      border: '1px dashed var(--gold-primary)',
+                      color: 'var(--gold-primary)',
+                      padding: '8px',
+                      borderRadius: '6px',
+                      fontSize: '0.75rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      fontWeight: 600
+                    }}
+                  >
+                    Upload Local (Arquivo)
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                          const base64String = reader.result as string;
+                          setNodes(nds => nds.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, imageUrl: base64String } } : n));
+                          setSelectedNode({ ...selectedNode, data: { ...selectedNode.data, imageUrl: base64String } } as AurumNode);
+                        };
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '20px', flex: 1 }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px', textTransform: 'uppercase' }}>Descrição / Lore</label>
+                <textarea 
+                  value={data.description || ''}
+                  onChange={(e) => {
+                    const newDesc = e.target.value;
+                    setNodes(nds => nds.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, description: newDesc } } : n));
+                    setSelectedNode({ ...selectedNode, data: { ...selectedNode.data, description: newDesc } } as AurumNode);
+                  }}
+                  placeholder="Insira os detalhes, história e contexto..."
+                  style={{ 
+                    width: '100%', 
+                    height: '100%',
+                    minHeight: '200px',
+                    background: 'rgba(0,0,0,0.5)', 
+                    border: '1px solid var(--border-color)', 
+                    color: 'var(--text-main)',
+                    padding: '12px',
+                    borderRadius: '6px',
+                    fontFamily: 'Outfit',
+                    fontSize: '0.85rem',
+                    resize: 'none',
+                    outline: 'none',
+                    lineHeight: '1.5'
+                  }}
+                />
+              </div>
+              
+              <div style={{ display: 'flex', gap: '10px', marginTop: 'auto' }}>
+                 <button className="aurum-btn" onClick={handleDeleteNode} style={{ flex: 1, borderColor: '#ff4444', color: '#ff4444' }}>
+                  <Trash2 size={14} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'middle' }} />
+                  Deletar Nó
+                 </button>
+              </div>
+            </div>
+          );
+        })() : <div></div>}
+      </aside>
+    </div>
+  )
+}
