@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="/favicon02.png" alt="Aurum Story Engine" width="90" />
+  <img src="public/favicon.png" alt="AURUM STORY ENGINE" width="90" />
   <h1>⚜️ Aurum Story Engine</h1>
   <p><i>O conhecimento narrativo não deve ser apenas armazenado. Deve ser compreendido.</i></p>
   <br/>
